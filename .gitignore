@@ -13,3 +13,4 @@ sam3/*
 __pycache__/
 .env
 *.sh
+data/*
