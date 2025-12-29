@@ -1,0 +1,20 @@
+name: sam3
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      # Core scientific/utility packages
+      - numpy
+      - matplotlib
+      - tqdm
+      - opencv-python
+      - pillow
+
+      # SAM3 prerequisites (공식 README 기준)
+      # PyTorch 2.7.0 + CUDA 12.6 전용 휠
+      # 실제 설치 시 아래 명령으로 설치하는 것을 권장:
+      # pip install torch==2.7.0 torchvision torchaudio \
+      #   --index-url https://download.pytorch.org/whl/cu126

@@ -1,0 +1,15 @@
+#sam3 폴더 모두
+sam3/*
+#mp4, MP4로 끝나는 모든 파일
+*.mp4
+*.MP4
+# png, PNG로 끝나는 모든 파일
+*.png
+*.PNG
+# jpg, JPG로 끝나는 모든 파일
+*.jpg
+*.JPG
+.vscode/
+__pycache__/
+.env
+*.sh
