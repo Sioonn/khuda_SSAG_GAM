@@ -7,6 +7,8 @@ from detection.sam3_transformers import Sam3TransformersConfig, extract_outputs_
 
 
 def main() -> int:
+    import torch
+
     repo_root = Path(__file__).resolve().parent
     # EDIT HERE
     video_path = str((repo_root / "data" / "example2.MP4").resolve())
@@ -17,6 +19,7 @@ def main() -> int:
     alpha = 0.45
     processing_device = "cuda"
     video_storage_device = "cuda"
+    save_outputs_per_frame = True
 
     video_frames, fps, outputs_per_frame, out_dir = extract_outputs_per_frame(
         Sam3TransformersConfig(
@@ -42,6 +45,19 @@ def main() -> int:
         for p, obj_ids in frame_0_outputs["prompt_to_obj_ids"].items():
             obj_ids_list = obj_ids.tolist() if hasattr(obj_ids, "tolist") else list(obj_ids)
             print(f"  {p}: {len(obj_ids_list)} objects")
+
+    if save_outputs_per_frame:
+        outputs_path = str((out_dir / f"{Path(video_path).stem}_outputs_per_frame.pt").resolve())
+        torch.save(
+            {
+                "video_path": video_path,
+                "prompts": prompts,
+                "fps": float(fps),
+                "outputs_per_frame": outputs_per_frame,
+            },
+            outputs_path,
+        )
+        print("Saved outputs_per_frame:", outputs_path)
 
     out_path = str((out_dir / f"{Path(video_path).stem}_masks_overlay.mp4").resolve())
     visualize_masks_to_video(
