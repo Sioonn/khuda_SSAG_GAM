@@ -7,23 +7,24 @@ import numpy as np
 
 from detection.sam3_transformers import Sam3TransformersConfig, extract_outputs_per_frame
 from rules.take_counter import TakeCounterConfig, count_take_events
-from utils.fridge_roi import FRIDGE_ROI_POLYGON_XY, polygon_to_mask
+from utils.fridge_roi import scaled_fridge_roi_polygon_xy, polygon_to_mask
 from utils.take_debug_video import overlay_take_debug_video
 
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parent
-
+    test_video = "transform_ex2.MP4"
     # ====== EDIT HERE ======
-    video_path = str((repo_root / "data" / "1203_1_1.MP4").resolve())
+    video_path = str((repo_root / "data" / test_video).resolve())
     prompts = ["objects in refrigerator"]
     foods_prompt = "objects in refrigerator"
 
-    target_fps = 20.0
+    target_fps = 15.0
     backend = "opencv"
     max_frames = None  # None => all frames
+    resize_width = 1280
+    resize_height = 720
 
-    save_outputs_per_frame_pt = True
     save_debug_video = True
     alpha = 0.45
     # =======================
@@ -34,8 +35,11 @@ def main() -> int:
         target_fps=target_fps,
         backend=backend,
         max_frames=max_frames,
-        processing_device="cuda",
-        video_storage_device="cuda",
+        # With downscaled 720p input, keep preprocessing/video storage on CPU to avoid CUDA OOM.
+        processing_device="cpu",
+        video_storage_device="cpu",
+        resize_width=resize_width,
+        resize_height=resize_height,
         out_dir=str((repo_root / "logs" / "take_counter").resolve()),
     )
     video_frames, fps, outputs_per_frame, out_dir = extract_outputs_per_frame(det_cfg)
@@ -48,7 +52,8 @@ def main() -> int:
         first = np.asarray(first)
     h, w = first.shape[:2]
 
-    roi_mask = polygon_to_mask(FRIDGE_ROI_POLYGON_XY, height=h, width=w)
+    roi_polygon_xy = scaled_fridge_roi_polygon_xy(height=h, width=w)
+    roi_mask = polygon_to_mask(roi_polygon_xy, height=h, width=w)
     rule_cfg = TakeCounterConfig(foods_prompt=foods_prompt)
     take_count, take_events, debug_by_frame = count_take_events(
         outputs_per_frame=outputs_per_frame,
@@ -65,7 +70,7 @@ def main() -> int:
                 "video_path": video_path,
                 "fps": float(fps),
                 "prompts": prompts,
-                "roi_polygon_xy": list(FRIDGE_ROI_POLYGON_XY),
+                "roi_polygon_xy": list(roi_polygon_xy),
                 "rule_config": rule_cfg.__dict__,
                 "take_count": int(take_count),
                 "take_events": [e.__dict__ for e in take_events],
@@ -77,21 +82,6 @@ def main() -> int:
     print("[result] take_count =", take_count)
     print("[saved] ", str(summary_path))
 
-    if save_outputs_per_frame_pt:
-        import torch
-
-        outputs_path = out_dir / f"{stem}_outputs_per_frame.pt"
-        torch.save(
-            {
-                "video_path": video_path,
-                "fps": float(fps),
-                "prompts": prompts,
-                "outputs_per_frame": outputs_per_frame,
-            },
-            str(outputs_path),
-        )
-        print("[saved] ", str(outputs_path))
-
     if save_debug_video:
         debug_video_path = out_dir / f"{stem}_take_debug.mp4"
         overlay_take_debug_video(
@@ -99,8 +89,8 @@ def main() -> int:
             outputs_per_frame=outputs_per_frame,
             debug_by_frame=debug_by_frame,
             out_path=str(debug_video_path),
-            fps=float(fps) if fps else 20.0,
-            roi_polygon_xy=FRIDGE_ROI_POLYGON_XY,
+            fps=float(fps) if fps else target_fps,
+            roi_polygon_xy=roi_polygon_xy,
             alpha=alpha,
         )
         print("[saved] ", str(debug_video_path))

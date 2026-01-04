@@ -22,6 +22,8 @@ class Sam3TransformersConfig:
     max_frames: int | None = None  # None => all frames
     processing_device: str = "cuda"
     video_storage_device: str = "cuda"
+    resize_width: int | None = None
+    resize_height: int | None = None
     model_name: str = "facebook/sam3"
     dtype: torch.dtype = torch.bfloat16
     out_dir: str | None = None  # None => <repo_root>/logs/sam3_transformers
@@ -51,6 +53,64 @@ def _extract_fps(meta) -> float:
         return 0.0
 
 
+def _to_numpy_cpu(x: Any) -> Any:
+    if hasattr(x, "detach"):
+        x = x.detach()
+    if hasattr(x, "cpu"):
+        x = x.cpu()
+    if hasattr(x, "numpy"):
+        return x.numpy()
+    return x
+
+
+def normalize_processed_outputs(processed_outputs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert postprocessed outputs to CPU-native structures so we don't keep GPU tensors
+    for all frames in memory (which can trigger CUDA OOM on long videos).
+    """
+    normalized: Dict[str, Any] = {}
+
+    if "object_ids" in processed_outputs:
+        obj_ids = _to_numpy_cpu(processed_outputs["object_ids"])
+        normalized["object_ids"] = np.asarray(obj_ids).astype(np.int64)
+
+    if "scores" in processed_outputs:
+        scores = _to_numpy_cpu(processed_outputs["scores"])
+        normalized["scores"] = np.asarray(scores).astype(np.float32)
+
+    if "boxes" in processed_outputs:
+        boxes = _to_numpy_cpu(processed_outputs["boxes"])
+        normalized["boxes"] = np.asarray(boxes).astype(np.float32)
+
+    if "masks" in processed_outputs:
+        masks = _to_numpy_cpu(processed_outputs["masks"])
+        masks_np = np.asarray(masks)
+        # Store as uint8 (0/1) to reduce RAM footprint.
+        normalized["masks"] = (masks_np > 0.0).astype(np.uint8)
+
+    if "prompt_to_obj_ids" in processed_outputs:
+        p2o_raw = processed_outputs["prompt_to_obj_ids"]
+        p2o: Dict[str, list[int]] = {}
+        for k, v in p2o_raw.items():
+            v_np = _to_numpy_cpu(v)
+            if hasattr(v_np, "tolist"):
+                v_list = v_np.tolist()
+            else:
+                v_list = list(v_np)
+            p2o[str(k)] = [int(x) for x in v_list]
+        normalized["prompt_to_obj_ids"] = p2o
+
+    # Keep any other small metadata keys (already CPU-friendly)
+    for k, v in processed_outputs.items():
+        if k in normalized:
+            continue
+        if k in {"object_ids", "scores", "boxes", "masks", "prompt_to_obj_ids"}:
+            continue
+        normalized[k] = v
+
+    return normalized
+
+
 def extract_outputs_per_frame(
     config: Sam3TransformersConfig,
 ) -> tuple[list[np.ndarray], float, dict[int, dict[str, Any]], Path]:
@@ -72,6 +132,8 @@ def extract_outputs_per_frame(
         config.video_path,
         target_fps=float(config.target_fps),
         out_path=resampled_path,
+        resize_width=config.resize_width,
+        resize_height=config.resize_height,
     )
     print(
         f"[resample] {resample_result.input_path} ({resample_result.original_fps:.2f}fps, "
@@ -101,10 +163,16 @@ def extract_outputs_per_frame(
     outputs_per_frame: Dict[int, dict[str, Any]] = {}
     max_frames = (len(video_frames) - 1) if config.max_frames is None else int(config.max_frames)
 
-    for model_outputs in model.propagate_in_video_iterator(
-        inference_session=inference_session, max_frame_num_to_track=max_frames
-    ):
-        processed_outputs = processor.postprocess_outputs(inference_session, model_outputs)
-        outputs_per_frame[int(model_outputs.frame_idx)] = processed_outputs
+    with torch.inference_mode():
+        for model_outputs in model.propagate_in_video_iterator(
+            inference_session=inference_session, max_frame_num_to_track=max_frames
+        ):
+            processed_outputs = processor.postprocess_outputs(inference_session, model_outputs)
+            outputs_per_frame[int(model_outputs.frame_idx)] = normalize_processed_outputs(
+                processed_outputs
+            )
+            # Best-effort: release cached GPU blocks between frames to reduce fragmentation.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     return video_frames, float(fps), outputs_per_frame, out_dir

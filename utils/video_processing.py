@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,7 @@ class ResampleResult:
     input_frame_count: int
     output_frame_count: int
     approx_duration_sec: float
+    output_size_wh: Tuple[int, int]
 
 
 def get_video_fps(video_path: str) -> float:
@@ -40,6 +41,8 @@ def resample_video_to_fps(
     target_fps: float = 20.0,
     out_path: Optional[str] = None,
     fourcc: str = "mp4v",
+    resize_width: Optional[int] = None,
+    resize_height: Optional[int] = None,
 ) -> ResampleResult:
     """
     Downsample a video to `target_fps` by frame skipping (no interpolation).
@@ -81,11 +84,17 @@ def resample_video_to_fps(
     out_dir = Path(out_path).resolve().parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    out_w = int(resize_width) if resize_width is not None else width
+    out_h = int(resize_height) if resize_height is not None else height
+    if out_w <= 0 or out_h <= 0:
+        cap.release()
+        raise ValueError("resize_width/resize_height must be positive when provided")
+
     writer = cv2.VideoWriter(
         out_path,
         cv2.VideoWriter_fourcc(*fourcc),
         float(target_fps),
-        (width, height),
+        (out_w, out_h),
     )
     if not writer.isOpened():
         cap.release()
@@ -104,6 +113,8 @@ def resample_video_to_fps(
             break
 
         if input_idx + 1e-6 >= next_keep:
+            if out_w != width or out_h != height:
+                frame_bgr = cv2.resize(frame_bgr, (out_w, out_h), interpolation=cv2.INTER_AREA)
             writer.write(frame_bgr)
             output_idx += 1
             next_keep += keep_interval
@@ -122,5 +133,5 @@ def resample_video_to_fps(
         input_frame_count=int(input_frame_count) if input_frame_count > 0 else int(input_idx),
         output_frame_count=int(output_idx),
         approx_duration_sec=approx_duration_sec,
+        output_size_wh=(out_w, out_h),
     )
-
