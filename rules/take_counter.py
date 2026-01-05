@@ -65,6 +65,66 @@ class FoodState:
     take_done: bool = False
 
 
+class BoundaryTouchTakeCounter:
+    """
+    Online (streaming) take counter using the same boundary-touch rule.
+    """
+
+    def __init__(self, *, roi_mask: np.ndarray, config: TakeCounterConfig):
+        if roi_mask.dtype != bool:
+            roi_mask = roi_mask.astype(bool)
+        self.roi_mask = roi_mask
+        self.config = config
+        self.boundary_band = _roi_boundary_band_mask(
+            roi_mask, thickness_px=int(config.boundary_thickness_px)
+        )
+        self.food_states: Dict[int, FoodState] = {}
+        self.take_count: int = 0
+        self.taken_object_ids: set[int] = set()
+
+    def update(
+        self,
+        *,
+        frame_index: int,
+        foods_by_id: Dict[int, np.ndarray],
+    ) -> list[TakeEvent]:
+        from utils.fridge_roi import inside_ratio
+
+        events: list[TakeEvent] = []
+        for fid, food_mask in foods_by_id.items():
+            fid_i = int(fid)
+            state = self.food_states.setdefault(fid_i, FoodState())
+            if state.take_done:
+                continue
+
+            mask_bool = food_mask.astype(bool)
+            mask_in_roi = np.logical_and(mask_bool, self.roi_mask)
+            area_in_roi = int(mask_in_roi.sum())
+            if area_in_roi < int(self.config.min_mask_pixels_in_roi):
+                state.boundary_touch_streak = 0
+                continue
+
+            touches = bool(np.logical_and(mask_in_roi, self.boundary_band).any())
+            if touches:
+                state.boundary_touch_streak += 1
+            else:
+                state.boundary_touch_streak = 0
+
+            if state.boundary_touch_streak >= int(self.config.boundary_touch_k):
+                ir = inside_ratio(food_mask, self.roi_mask)
+                state.take_done = True
+                self.take_count += 1
+                self.taken_object_ids.add(fid_i)
+                events.append(
+                    TakeEvent(
+                        frame_index=int(frame_index),
+                        food_id=fid_i,
+                        inside_ratio=float(ir),
+                    )
+                )
+        return events
+
+
 def prompt_masks_by_id(
     processed_outputs: Dict[str, Any],
     *,
@@ -89,6 +149,21 @@ def prompt_masks_by_id(
 
     ids = _ids_for_prompt(prompt)
     return {i: masks_by_id[i] for i in ids if i in masks_by_id}
+
+
+def prompt_masks_by_id_or_all(
+    processed_outputs: Dict[str, Any],
+    *,
+    prompt: str,
+) -> Dict[int, np.ndarray]:
+    """
+    If `prompt_to_obj_ids` exists, select masks for that prompt.
+    Otherwise, fall back to returning all instance masks.
+    """
+    if "prompt_to_obj_ids" not in processed_outputs:
+        return processed_outputs_to_masks_by_id(processed_outputs)
+    masks = prompt_masks_by_id(processed_outputs, prompt=prompt)
+    return masks if len(masks) > 0 else processed_outputs_to_masks_by_id(processed_outputs)
 
 
 def _roi_boundary_band_mask(roi_mask: np.ndarray, *, thickness_px: int) -> np.ndarray:
@@ -140,7 +215,7 @@ def count_take_events(
 
     for frame_idx in sorted(outputs_per_frame.keys()):
         processed = outputs_per_frame[frame_idx]
-        foods_by_id = prompt_masks_by_id(processed, prompt=config.foods_prompt)
+        foods_by_id = prompt_masks_by_id_or_all(processed, prompt=config.foods_prompt)
 
         events_this_frame: list[TakeEvent] = []
 

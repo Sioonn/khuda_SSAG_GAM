@@ -1,0 +1,61 @@
+Streaming Video Inference
+⚠️ **Note on Streaming Inference Quality**: Streaming inference disables hotstart heuristics that remove unmatched and duplicate objects, as these require access to future frames to make informed decisions. This may result in more false positive detections and duplicate object tracks compared to pre-loaded video inference. For best results, use pre-loaded video inference when all frames are available.
+For real-time applications, SAM3 Video supports processing video frames as they arrive:
+
+Copied
+# Initialize session for streaming
+streaming_inference_session = processor.init_video_session(
+    inference_device=device,
+    processing_device="cpu",
+    video_storage_device="cpu",
+    dtype=torch.bfloat16,
+)
+
+# Add text prompt
+text = "person"
+streaming_inference_session = processor.add_text_prompt(
+    inference_session=streaming_inference_session,
+    text=text,
+)
+
+# Process frames one by one (streaming mode)
+streaming_outputs_per_frame = {}
+for frame_idx, frame in enumerate(video_frames[:50]):  # Process first 50 frames
+    # First, process the frame using the processor
+    inputs = processor(images=frame, device=device, return_tensors="pt")
+...
+    # Process frame using streaming inference - pass the processed pixel_values
+    model_outputs = model(
+        inference_session=streaming_inference_session,
+        frame=inputs.pixel_values[0],  # Provide processed frame - this enables streaming mode
+        reverse=False,
+    )
+...
+    # Post-process outputs with original_sizes for proper resolution handling
+    processed_outputs = processor.postprocess_outputs(
+        streaming_inference_session,
+        model_outputs,
+        original_sizes=inputs.original_sizes,  # Required for streaming inference
+    )
+    streaming_outputs_per_frame[frame_idx] = processed_outputs
+...
+    if (frame_idx + 1) % 10 == 0:
+        print(f"Processed {frame_idx + 1} frames...")
+
+print(f"✓ Streaming inference complete! Processed {len(streaming_outputs_per_frame)} frames")
+✓ Streaming inference complete! Processed 50 frames
+
+# Access results
+frame_0_outputs = streaming_outputs_per_frame[0]
+print(f"Detected {len(frame_0_outputs['object_ids'])} objects in first frame")
+print(f"Boxes are in XYXY format (absolute pixel coordinates): {frame_0_outputs['boxes'].shape}")
+print(f"Masks are at original video resolution: {frame_0_outputs['masks'].shape}")
+Custom Resolution Inference
+⚠️ **Performance Note**: Custom resolutions may degrade accuracy. The model is meant to be used at 1008px resolution.
+For faster inference or lower memory usage:
+
+Copied
+config = Sam3VideoConfig.from_pretrained("facebook/sam3")
+config.image_size = 560
+model = Sam3VideoModel.from_pretrained("facebook/sam3", config=config).to(device, dtype=torch.bfloat16)
+processor = Sam3VideoProcessor.from_pretrained("facebook/sam3", size={"height": 560, "width": 560})

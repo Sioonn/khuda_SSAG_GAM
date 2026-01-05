@@ -1,0 +1,44 @@
+{
+  "video_path": "/data/sion011218/repos/khuda_final/data/가져감(1개)_화각변환/tmpDophiGoIVRecord.MP4",
+  "stream": {
+    "original_fps": 20.004445432318292,
+    "target_fps": 15.0,
+    "resize_wh": [
+      1280,
+      720
+    ]
+  },
+  "prompts": [
+    "objects in refrigerator"
+  ],
+  "roi_polygon_xy": [
+    [
+      0,
+      0
+    ],
+    [
+      728,
+      0
+    ],
+    [
+      1126,
+      462
+    ],
+    [
+      1184,
+      719
+    ],
+    [
+      0,
+      719
+    ]
+  ],
+  "rule_config": {
+    "foods_prompt": "objects in refrigerator",
+    "boundary_thickness_px": 4,
+    "boundary_touch_k": 1,
+    "min_mask_pixels_in_roi": 200
+  },
+  "take_count": 0,
+  "take_events": []
+}
